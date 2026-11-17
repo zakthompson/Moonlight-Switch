@@ -1,5 +1,6 @@
 #ifdef __SWITCH2__
 #include "switch2_build_id.hpp"
+#include "Switch2Runtime.hpp"
 #endif
 //
 //  main.cpp
@@ -99,21 +100,39 @@ int main(int argc, char* argv[]) {
 #ifdef __SWITCH2__
     // Keep diagnostics available after a failed launch or streaming session.
     mkdir("sdmc:/switch/Moonlight-Switch", 0777);
+    // stderr (Mesa, curl verbose output) gets its own file. Sharing one file
+    // between stderr and the background log writer let concurrent writes
+    // overwrite each other's text.
+    if (FILE* err = fopen("sdmc:/switch/Moonlight-Switch/stderr.log", "w"))
+    {
+        dup2(fileno(err), fileno(stderr));
+        setvbuf(stderr, nullptr, _IONBF, 0);
+    }
+    // Keep the previous run's log so a crash survives the relaunch.
+    remove("sdmc:/switch/Moonlight-Switch/startup.prev.log");
+    rename("sdmc:/switch/Moonlight-Switch/startup.log", "sdmc:/switch/Moonlight-Switch/startup.prev.log");
     if (FILE* log = fopen("sdmc:/switch/Moonlight-Switch/startup.log", "w"))
     {
-        setvbuf(log, nullptr, _IONBF, 0);
-        brls::Logger::setLogOutput(log);
-        dup2(fileno(log), fileno(stderr));
-        setvbuf(stderr, nullptr, _IONBF, 0);
+        // Logger writes are queued in memory and written by a background thread,
+        // so streaming threads never wait on the SD card.
+        brls::Logger::setLogOutput(switch2OpenAsyncLog(log));
     }
     brls::Logger::info("SWITCH2_BUILD: id={} renderer=native-vulkan", MOONLIGHT_SWITCH2_BUILD_ID);
     brls::Logger::info(
         "Switch 2 startup: libounce, native Vulkan UI/video over OunceVK; H.264/AV1 hardware available; HEVC software");
+    switch2LogSocketConfiguration();
 #endif
     // Enable recording for Twitter memes
 #ifdef __SWITCH__
     appletInitializeGamePlayRecording();
+#ifdef __SWITCH2__
+    {
+        Result rc = appletSetWirelessPriorityMode(AppletWirelessPriorityMode_OptimizedForWlan);
+        brls::Logger::info("SWITCH2_NET: appletSetWirelessPriorityMode(OptimizedForWlan) rc=0x{:x}", rc);
+    }
+#else
     appletSetWirelessPriorityMode(AppletWirelessPriorityMode_OptimizedForWlan);
+#endif
 
     // Keep the UI loop away from the hottest streaming worker core.
     preferSwitchCore(0);

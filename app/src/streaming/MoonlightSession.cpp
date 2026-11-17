@@ -431,5 +431,54 @@ void MoonlightSession::draw(NVGcontext* vg, int width, int height) {
                 *m_video_renderer->video_render_stats();
             m_last_stats_update_ms = now;
         }
+#ifdef __SWITCH2__
+        log_network_health(now);
+#endif
     }
 }
+
+#ifdef __SWITCH2__
+// One line every 5 s for diagnosing streaming drops. host_video_pkts and
+// host_fec_pkts are the packet counts the host declared for the frames seen,
+// not packets received; FEC recovery/failure and network-dropped frames show
+// actual loss.
+void MoonlightSession::log_network_health(uint64_t now) {
+    if (m_last_health_log_ms == 0) {
+        m_last_health_log_ms = now;
+        LiGetRTPVideoStats(&m_last_rtp_stats);
+        return;
+    }
+    if (now - m_last_health_log_ms < 5000)
+        return;
+
+    RTP_VIDEO_STATS rtp = {};
+    LiGetRTPVideoStats(&rtp);
+    const auto& decode = m_session_stats.video_decode_stats;
+    if (rtp.packetCountVideo < m_last_rtp_stats.packetCountVideo ||
+        decode.network_dropped_frames < m_last_network_dropped) {
+        // The counters were reset by a new stream; start a fresh baseline.
+        m_last_rtp_stats       = rtp;
+        m_last_network_dropped = decode.network_dropped_frames;
+        m_last_health_log_ms   = now;
+        return;
+    }
+    const float seconds = float(now - m_last_health_log_ms) / 1000.0f;
+    const uint32_t video = rtp.packetCountVideo - m_last_rtp_stats.packetCountVideo;
+    const uint32_t fec = rtp.packetCountFec - m_last_rtp_stats.packetCountFec;
+    brls::Logger::info(
+        "SWITCH2_NET_HEALTH: {:.1f}s host_video_pkts={} host_fec_pkts={} fec_recovered={} fec_failed={} oos={} "
+        "invalid={} net_dropped_frames={} poor={} rx_fps={:.1f} dec_fps={:.1f} reassembly_ms={:.1f} "
+        "decode_ms={:.1f}",
+        seconds, video, fec,
+        rtp.packetCountFecRecovered - m_last_rtp_stats.packetCountFecRecovered,
+        rtp.packetCountFecFailed - m_last_rtp_stats.packetCountFecFailed,
+        rtp.packetCountOOS - m_last_rtp_stats.packetCountOOS,
+        rtp.packetCountInvalid - m_last_rtp_stats.packetCountInvalid,
+        decode.network_dropped_frames - m_last_network_dropped, m_connection_status_is_poor,
+        decode.current_received_fps, decode.current_decoded_fps, decode.current_receive_time,
+        decode.current_decoding_time);
+    m_last_rtp_stats = rtp;
+    m_last_network_dropped = decode.network_dropped_frames;
+    m_last_health_log_ms = now;
+}
+#endif

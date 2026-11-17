@@ -331,7 +331,16 @@ Copy the NRO to its own folder, for example
 HEN/HBMenu title-takeover session used by the other ports. Settings, pairing
 keys, cache and logs use `sdmc:/switch/Moonlight-Switch`; existing settings and
 pairing data are preserved during deployment. `startup.log` records renderer initialization,
-decoder selection, and `SWITCH2_HEALTH: first UI frame completed`.
+decoder selection, and `SWITCH2_HEALTH: first UI frame completed`. Each launch moves the
+previous log to `startup.prev.log`, so a crash log survives one relaunch. Mesa and curl
+output written to stderr goes to `stderr.log`.
+
+During a stream, `startup.log` also records the UDP receive buffer the socket driver
+accepted (`SWITCH2_NET:`), each streaming thread's core and priority, and a
+`SWITCH2_NET_HEALTH` line every 5 s. Streaming needs the console on 5 GHz WiFi: on
+2.4 GHz, received video capped at about 35-38 Mbps and higher bitrates lost most frames,
+while on 5 GHz an 80 Mbps stream received every packet. Check the band in the console's
+connection test before tuning anything else.
 
 A build and zero unresolved symbols do not establish device functionality.
 Qualification requires a visible UI, controller/touch/native-keyboard checks,

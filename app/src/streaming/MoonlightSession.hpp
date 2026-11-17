@@ -89,4 +89,11 @@ class MoonlightSession {
 
     SessionStats m_session_stats = {};
     uint64_t m_last_stats_update_ms = 0;
+
+#ifdef __SWITCH2__
+    void log_network_health(uint64_t now);
+    RTP_VIDEO_STATS m_last_rtp_stats = {};
+    uint32_t m_last_network_dropped = 0;
+    uint64_t m_last_health_log_ms = 0;
+#endif
 };
