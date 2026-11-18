@@ -37,7 +37,7 @@ FIXTURE = r"""
 #include <vector>
 static const auto mainThread = std::this_thread::get_id();
 static std::vector<std::string> events;
-static int starts=0, draws=0;
+static int starts=0, draws=0, failStarts=0;
 namespace brls {
 struct Logger { template<class... T> static void info(T...) {} };
 static std::mutex queueMutex;
@@ -48,6 +48,12 @@ void sync(std::function<void()> fn) {
 void drain() {
     std::vector<std::function<void()>> pending;
     {std::lock_guard<std::mutex> lock(queueMutex);pending.swap(queue);}
+    for(auto& fn:pending)fn();
+}
+static std::vector<std::function<void()>> delayed;
+size_t delay(long,std::function<void()> fn){delayed.push_back(fn);return 0;}
+void runDelayed() {
+    std::vector<std::function<void()>> pending;pending.swap(delayed);
     for(auto& fn:pending)fn();
 }
 }
@@ -65,6 +71,7 @@ using POPUS_MULTISTREAM_CONFIGURATION=OPUS_MULTISTREAM_CONFIGURATION*;
 using PDECODE_UNIT=void*;
 template<class T> struct GSResult {
     bool ok; static GSResult success(T){return {true};}
+    static GSResult failure(std::string){return {false};}
     bool isSuccess()const{return ok;}
 };
 template<class T> using ServerCallback=const std::function<void(GSResult<T>)>;
@@ -109,7 +116,8 @@ struct Switch2VulkanContext {
 void LiStopConnection(){
     assert(std::this_thread::get_id()==mainThread);events.push_back("stop");
 }
-uint64_t LiGetMillis(){return 1000;}
+static uint64_t nowMs=1000;
+uint64_t LiGetMillis(){return nowMs;}
 """
 
 SCENARIOS = r"""
@@ -118,6 +126,7 @@ void MoonlightSession::log_network_health(uint64_t) {}
 #endif
 void MoonlightSession::start(ServerCallback<bool> cb,bool sunshine) {
     ++starts;events.push_back("start");m_is_sunshine=sunshine;
+    if(failStarts>0){--failStarts;cb(GSResult<bool>::failure("no route"));return;}
     connection_started();cb(GSResult<bool>::success(true));
 }
 int main() {
@@ -163,6 +172,38 @@ int main() {
     s=new MoonlightSession("host",1);events.clear();brls::drain();
     assert(events.empty()); // stale decoder reconnect cannot reach a new session
     delete s;
+
+    // Waking from sleep: wifi is still down for the first reconnect attempts.
+    s=new MoonlightSession("host",1);starts=0;failStarts=2;
+    s->set_suspended(true);
+    std::thread([]{MoonlightSession::connection_terminated(-1);}).join();
+    brls::drain();assert(starts==0);
+    nowMs+=600000; // a long sleep must not use up the retry window
+    s->set_suspended(false);s->draw(nullptr,1280,720);brls::drain();
+    assert(starts==1&&s->is_reconnecting()&&!s->is_terminated());
+    assert(brls::delayed.size()==1);
+    nowMs+=2000;brls::runDelayed();brls::drain();
+    assert(starts==2&&s->is_reconnecting()&&!s->is_terminated());
+    nowMs+=2000;brls::runDelayed();brls::drain();
+    assert(starts==3&&!s->is_reconnecting()&&!s->is_terminated());
+    assert(brls::delayed.empty()&&s->m_reconnect_attempts==0);
+    delete s;
+
+    // The host never comes back: give up once the window has passed.
+    s=new MoonlightSession("host",1);starts=0;failStarts=1000;
+    MoonlightSession::requestRestart();brls::drain();brls::drain();
+    while(!brls::delayed.empty()){nowMs+=2000;brls::runDelayed();brls::drain();}
+    assert(s->is_terminated()&&!s->is_reconnecting()&&starts==11);
+    delete s;
+
+    // Stopping the stream cancels a pending retry.
+    s=new MoonlightSession("host",1);starts=0;failStarts=1;
+    MoonlightSession::requestRestart();brls::drain();brls::drain();
+    assert(starts==1&&brls::delayed.size()==1);
+    s->stop(false);brls::runDelayed();brls::drain();
+    assert(starts==1);
+    delete s;
+    failStarts=0;
 }
 """
 

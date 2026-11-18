@@ -36,6 +36,7 @@ class MoonlightSession {
 
     bool is_active() const { return m_is_active; }
     bool is_terminated() const { return m_is_terminated; }
+    bool is_reconnecting() const { return m_is_reconnecting; }
 
     bool connection_status_is_poor() const {
         return m_connection_status_is_poor;
@@ -97,6 +98,9 @@ class MoonlightSession {
     bool m_suspended = false;
     bool m_invalidate_renderer_pending = false;
     bool m_restart_pending = false;
+    bool m_is_reconnecting = false;
+    int m_reconnect_attempts = 0;
+    uint64_t m_reconnect_deadline_ms = 0;
     bool m_use_hdr = false;
 
     SessionStats m_session_stats = {};

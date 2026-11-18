@@ -354,6 +354,15 @@ void StreamingView::draw(NVGcontext* vg, float x, float y, float width,
 
     session->draw(vg, (int) width, (int) height);
 
+    if (session->is_reconnecting()) {
+        nvgFontSize(vg, 28);
+        nvgFontBlur(vg, 0);
+        nvgTextAlign(vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
+        nvgFontFaceId(vg, Application::getFont(FONT_REGULAR));
+        nvgFillColor(vg, nvgRGBA(255, 255, 255, 255));
+        nvgText(vg, width / 2, height / 2, "Reconnecting...", nullptr);
+    }
+
     if (!tempInputLock && session->is_active())
         handleInput();
     handleOverlayCombo();

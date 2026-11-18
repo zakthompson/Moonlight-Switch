@@ -22,6 +22,13 @@ static MoonlightSession* m_active_session = nullptr;
 static std::atomic<uint64_t> m_session_generation{0};
 static MoonlightSessionDecoderAndRenderProvider* m_provider = nullptr;
 
+// After a console sleep, wifi takes a few seconds to come back and the first
+// reconnect attempts fail before reaching the host ("Could not connect to
+// server"). Keep retrying for a while instead of ending the stream on the
+// first failure.
+static constexpr uint64_t RECONNECT_WINDOW_MS = 20000;
+static constexpr long RECONNECT_RETRY_DELAY_MS = 2000;
+
 
 MoonlightSession* MoonlightSession::activeSession() {
     return m_active_session;
@@ -425,6 +432,8 @@ void MoonlightSession::restart() {
     // Leave decoder/GPU teardown until the render thread is back in focus.
     if (m_suspended) {
         m_restart_pending = true;
+        // Time spent asleep must not use up the retry window.
+        m_reconnect_deadline_ms = 0;
         return;
     }
 
@@ -436,17 +445,40 @@ void MoonlightSession::restart() {
     LiStopConnection();
     m_generation = ++m_session_generation;
 
+    if (m_reconnect_deadline_ms == 0)
+        m_reconnect_deadline_ms = LiGetMillis() + RECONNECT_WINDOW_MS;
+    m_is_reconnecting = true;
+    ++m_reconnect_attempts;
+
     start([generation = m_generation](const GSResult<bool>& result) {
         brls::sync([generation, result] {
-            if (!m_active_session || m_active_session->m_generation != generation)
+            auto* session = m_active_session;
+            if (!session || session->m_generation != generation)
                 return;
             if (result.isSuccess()) {
-                brls::Logger::info("MoonlightSession: Reconnected");
-            } else {
-                brls::Logger::info("MoonlightSession: Reconnection failed");
-                m_active_session->m_is_active = false;
-                m_active_session->m_is_terminated = true;
+                brls::Logger::info("MoonlightSession: Reconnected after {} attempt(s)",
+                                   session->m_reconnect_attempts);
+                session->m_is_reconnecting = false;
+                session->m_reconnect_attempts = 0;
+                session->m_reconnect_deadline_ms = 0;
+                return;
             }
+            if (!session->m_stop_requested &&
+                LiGetMillis() < session->m_reconnect_deadline_ms) {
+                brls::Logger::info(
+                    "MoonlightSession: Reconnection attempt {} failed; retrying in {} ms",
+                    session->m_reconnect_attempts, RECONNECT_RETRY_DELAY_MS);
+                brls::delay(RECONNECT_RETRY_DELAY_MS, [generation] {
+                    if (m_active_session && m_active_session->m_generation == generation)
+                        m_active_session->restart();
+                });
+                return;
+            }
+            brls::Logger::info("MoonlightSession: Reconnection failed after {} attempt(s)",
+                               session->m_reconnect_attempts);
+            session->m_is_reconnecting = false;
+            session->m_is_active = false;
+            session->m_is_terminated = true;
         });
     }, m_is_sunshine);
 }
