@@ -60,6 +60,7 @@ struct CONNECTION_LISTENER_CALLBACKS {};
 struct DECODER_RENDERER_CALLBACKS {};
 struct AUDIO_RENDERER_CALLBACKS {};
 struct OPUS_MULTISTREAM_CONFIGURATION {};
+struct RTP_VIDEO_STATS {uint32_t packetCountVideo=0,packetCountFec=0;};
 using POPUS_MULTISTREAM_CONFIGURATION=OPUS_MULTISTREAM_CONFIGURATION*;
 using PDECODE_UNIT=void*;
 template<class T> struct GSResult {
@@ -112,6 +113,9 @@ uint64_t LiGetMillis(){return 1000;}
 """
 
 SCENARIOS = r"""
+#ifdef __SWITCH2__
+void MoonlightSession::log_network_health(uint64_t) {}
+#endif
 void MoonlightSession::start(ServerCallback<bool> cb,bool sunshine) {
     ++starts;events.push_back("start");m_is_sunshine=sunshine;
     connection_started();cb(GSResult<bool>::success(true));
