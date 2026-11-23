@@ -1,4 +1,4 @@
-#ifdef __SWITCH2__
+#ifdef __SWITCH__
 // fopencookie() is a GNU extension in newlib.
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE 1
@@ -101,6 +101,7 @@ FILE* switch2OpenAsyncLog(FILE* file)
     return queued;
 }
 
+#ifdef __SWITCH2__
 // Set by Borealis's userAppInit.
 extern "C" u32 brls_switch2_udp_rx_buf_size;
 extern "C" int brls_switch2_udp_rx_probe_errno[3];
@@ -125,4 +126,5 @@ void switch2LogSocketConfiguration()
         brls::Logger::error("SWITCH2_NET: applet type {}, streaming socket configuration not applied "
                             "(not an application, or every size was rejected)", int(type));
 }
-#endif
+#endif // __SWITCH2__
+#endif // __SWITCH__

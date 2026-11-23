@@ -1,5 +1,5 @@
 #pragma once
-#ifdef __SWITCH2__
+#ifdef __SWITCH__
 #include <cstdio>
 
 // Wraps `file` in a FILE* whose writes only append to an in-memory queue. A
@@ -9,6 +9,8 @@
 // the socket reads that keep up with the stream.
 FILE* switch2OpenAsyncLog(FILE* file);
 
+#ifdef __SWITCH2__
 // Logs the UDP receive buffer size that Borealis's userAppInit configured.
 void switch2LogSocketConfiguration();
-#endif
+#endif // __SWITCH2__
+#endif // __SWITCH__

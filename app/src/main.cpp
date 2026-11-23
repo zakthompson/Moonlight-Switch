@@ -1,5 +1,7 @@
 #ifdef __SWITCH2__
 #include "switch2_build_id.hpp"
+#endif
+#ifdef __SWITCH__
 #include "Switch2Runtime.hpp"
 #endif
 //
@@ -97,9 +99,10 @@ void preferSwitchCore(int ordinal) {
 #endif
 
 int main(int argc, char* argv[]) {
-#ifdef __SWITCH2__
+#ifdef __SWITCH__
     // Keep diagnostics available after a failed launch or streaming session.
     mkdir("sdmc:/switch/Moonlight-Switch", 0777);
+#ifdef __SWITCH2__
     // stderr (Mesa, curl verbose output) gets its own file. Sharing one file
     // between stderr and the background log writer let concurrent writes
     // overwrite each other's text.
@@ -108,6 +111,7 @@ int main(int argc, char* argv[]) {
         dup2(fileno(err), fileno(stderr));
         setvbuf(stderr, nullptr, _IONBF, 0);
     }
+#endif
     // Keep the previous run's log so a crash survives the relaunch.
     remove("sdmc:/switch/Moonlight-Switch/startup.prev.log");
     rename("sdmc:/switch/Moonlight-Switch/startup.log", "sdmc:/switch/Moonlight-Switch/startup.prev.log");
@@ -117,10 +121,14 @@ int main(int argc, char* argv[]) {
         // so streaming threads never wait on the SD card.
         brls::Logger::setLogOutput(switch2OpenAsyncLog(log));
     }
+#ifdef __SWITCH2__
     brls::Logger::info("SWITCH2_BUILD: id={} renderer=native-vulkan", MOONLIGHT_SWITCH2_BUILD_ID);
     brls::Logger::info(
         "Switch 2 startup: libounce, native Vulkan UI/video over OunceVK; H.264/AV1 hardware available; HEVC software");
     switch2LogSocketConfiguration();
+#else
+    brls::Logger::info("SWITCH1_BUILD: audio diagnostics");
+#endif
 #endif
     // Enable recording for Twitter memes
 #ifdef __SWITCH__
