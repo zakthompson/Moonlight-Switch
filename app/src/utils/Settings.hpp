@@ -244,6 +244,9 @@ class Settings : public Singleton<Settings> {
     void set_frames_queue_size(int frames_queue_size) { m_frames_queue_size = frames_queue_size; }
     [[nodiscard]] int frames_queue_size() const { return m_frames_queue_size; }
 
+    void set_frame_pacing(bool frame_pacing) { m_frame_pacing = frame_pacing; }
+    [[nodiscard]] bool frame_pacing() const { return m_frame_pacing; }
+
     void set_sops(bool sops) { m_sops = sops; }
     [[nodiscard]] bool sops() const { return m_sops; }
 
@@ -367,6 +370,7 @@ class Settings : public Singleton<Settings> {
     int m_decoder_threads = 4;
     int m_frames_queue_size = 3;
     bool m_sops = false;
+    bool m_frame_pacing = false;
     bool m_play_audio = false;
     bool m_write_log = false;
     bool m_swap_ui_keys = false;

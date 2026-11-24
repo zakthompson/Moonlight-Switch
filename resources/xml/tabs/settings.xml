@@ -43,6 +43,9 @@
             <brls:BooleanCell
                 id="use_hw_decoding"/>
 
+            <brls:BooleanCell
+                id="frame_pacing"/>
+
             <brls:Header
                 id="header"
                 title="@i18n/settings/video_bitrate"

@@ -377,6 +377,10 @@ void Settings::load() {
                 m_use_hw_decoding = json_typeof(hw_decoding) == JSON_TRUE;
             }
 
+            if (json_t* frame_pacing = json_object_get(settings, "frame_pacing")) {
+                m_frame_pacing = json_typeof(frame_pacing) == JSON_TRUE;
+            }
+
             if (json_t* sops = json_object_get(settings, "sops")) {
                 m_sops = json_typeof(sops) == JSON_TRUE;
             }
@@ -659,6 +663,7 @@ void Settings::save()
             json_object_set_new(settings, "click_by_tap", m_click_by_tap ? json_true() : json_false());
             json_object_set_new(settings, "use_hw_decoding", m_use_hw_decoding ? json_true() : json_false());
             json_object_set_new(settings, "sops", m_sops ? json_true() : json_false());
+            json_object_set_new(settings, "frame_pacing", m_frame_pacing ? json_true() : json_false());
             json_object_set_new(settings, "play_audio", m_play_audio ? json_true() : json_false());
             json_object_set_new(settings, "write_log", m_write_log ? json_true() : json_false());
             json_object_set_new(settings, "swap_ui_keys", m_swap_ui_keys ? json_true() : json_false());

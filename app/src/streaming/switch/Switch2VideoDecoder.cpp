@@ -7,6 +7,7 @@
 #include <limits>
 
 #include "AVFrameHolder.hpp"
+#include "FramePacing.hpp"
 #include "FFmpegVideoDecoder.hpp"
 #include "Settings.hpp"
 #include "Switch2ImageInterop.hpp"
@@ -24,6 +25,7 @@ Switch2VideoDecoder::~Switch2VideoDecoder() { cleanup(); }
 int Switch2VideoDecoder::setup(int format, int width, int height, int fps, void* context, int flags)
 {
     cleanup();
+    framePacing().reset();
     if (width <= 0 || height <= 0 || width > 4096 || height > 4096 || fps <= 0)
         return -1;
     if ((format & VIDEO_FORMAT_MASK_H265) || !Settings::instance().use_hw_decoding())
@@ -207,6 +209,7 @@ bool Switch2VideoDecoder::drain(uint64_t timeout)
         }
         const int visibleWidth = output->width, visibleHeight = output->height;
         AVFrameHolder::instance().pushTransferred(output);
+        framePacing().record(FramePacing::Decoded, LiGetMicroseconds());
         switch2WakeVideoFrame();
         const uint64_t now      = LiGetMillis();
         const uint64_t copyTime = LiGetMicroseconds() - before;
@@ -282,6 +285,7 @@ int Switch2VideoDecoder::submit_decode_unit(PDECODE_UNIT unit)
     const auto reassembly   = uint32_t(now >= received ? std::min<uint64_t>(now - received, 60000) : 0);
     m_progress.current_reassembly_time += reassembly;
     m_progress.total_reassembly_time += reassembly;
+    framePacing().received(unit->presentationTimeUs, unit->frameHostProcessingLatency, unit->receiveTimeUs);
     if (m_need_idr)
     {
         if (now < m_retry_after_ms)

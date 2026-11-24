@@ -382,6 +382,15 @@ SettingsTab::SettingsTab() {
     hwDecoding->setEnabled(false);
 #endif
 
+#if defined(__SWITCH2__)
+    // Shows hardware-decoded frames on the host's capture cadence instead of
+    // the moment they arrive (Switch 2 native decoder path only).
+    framePacing->init("settings/frame_pacing"_i18n, Settings::instance().frame_pacing(),
+                      [](bool value) { Settings::instance().set_frame_pacing(value); });
+#else
+    framePacing->removeFromSuperView(true);
+#endif
+
 #if defined(__PSV__)
     const float mbpsMaxLimit = 20000;
 #elif defined(PLATFORM_SWITCH)

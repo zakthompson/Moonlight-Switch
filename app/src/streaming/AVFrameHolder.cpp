@@ -8,6 +8,7 @@
 #include "AVFrameHolder.hpp"
 
 #include <algorithm>
+#include <cstdlib>
 
 namespace {
 
@@ -17,6 +18,16 @@ constexpr auto kArrivalRateResetGap = std::chrono::milliseconds(500);
 constexpr double kArrivalRateSmoothing = 0.35;
 constexpr double kOccupancyCorrectionPerFrame = 0.01;
 constexpr double kMaximumOccupancyCorrection = 0.08;
+// Host-timestamp pacing (Switch 2 "Frame pacing" setting).
+constexpr int64_t kPacingMarginNs = 1000000;      // UI-thread wake slack
+constexpr int64_t kPacingMaxDelayNs = 40000000;   // never buffer more than this over the earliest arrival
+constexpr int64_t kPacingResetNs = 1000000000;    // PTS wrap, stream restart or a long stall
+constexpr int64_t kPacingMinFallNs = 50000;       // per frame: ~3 ms/s at 60 fps
+constexpr size_t kPacingPercentile = 95;
+
+int64_t steadyNs(std::chrono::steady_clock::time_point time) {
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(time.time_since_epoch()).count();
+}
 
 void freeFrameQueue(std::queue<AVFrame*>& frames) {
     for (; !frames.empty(); frames.pop()) {
@@ -105,6 +116,9 @@ AVFrame* AVFrameQueue::pop(bool* consumed) {
     }
 
     const auto now = std::chrono::steady_clock::now();
+    if (ptsPacing) {
+        return popPacedLocked(consumed, now);
+    }
     if (!drawClockStarted) {
         lastDraw = now;
         drawClockStarted = true;
@@ -255,9 +269,14 @@ void AVFrameQueue::recycleWriteFrame(AVFrame*& frame) {
 }
 
 void AVFrameQueue::configure(
-    size_t queueLimit, int configuredStreamFps, bool transferOwnershipEnabled, size_t capacityLimit)
+    size_t queueLimit, int configuredStreamFps, bool transferOwnershipEnabled, size_t capacityLimit,
+    bool ptsPacingEnabled)
 {
     std::lock_guard<std::mutex> lock(m_mutex);
+    ptsPacing = ptsPacingEnabled && transferOwnershipEnabled;
+    pacingOffsetValid = false;
+    pacingOffsetNs = pacingDelayNs = 0;
+    latenessCount = latenessNext = 0;
     const size_t configuredDepth = std::max<size_t>(queueLimit, 1);
     limit = capacityFor(configuredDepth);
     if (capacityLimit)
@@ -367,8 +386,10 @@ bool AVFrameQueue::pushTransferredLocked(AVFrame* item) {
         return false;
     }
 
+    const auto now = std::chrono::steady_clock::now();
     queue.push(item);
-    recordArrivalLocked(std::chrono::steady_clock::now());
+    recordArrivalLocked(now);
+    recordLatenessLocked(item, now);
     pushesSincePop++;
     maxPushBurstStat = std::max(maxPushBurstStat, pushesSincePop);
 
@@ -386,6 +407,95 @@ bool AVFrameQueue::pushTransferredLocked(AVFrame* item) {
     }
 
     return true;
+}
+
+void AVFrameQueue::recordLatenessLocked(const AVFrame* item, std::chrono::steady_clock::time_point now) {
+    if (!ptsPacing) {
+        return;
+    }
+    const int64_t lateness = steadyNs(now) - item->pts;
+    if (!pacingOffsetValid || std::llabs(lateness - pacingOffsetNs) > kPacingResetNs) {
+        latenessCount = latenessNext = 0;
+        pacingOffsetNs = lateness;
+        pacingOffsetValid = true;
+    }
+    latenessWindow[latenessNext] = lateness;
+    latenessNext = (latenessNext + 1) % latenessWindow.size();
+    latenessCount = std::min(latenessCount + 1, latenessWindow.size());
+
+    std::array<int64_t, std::tuple_size<decltype(latenessWindow)>::value> sorted{};
+    std::copy_n(latenessWindow.begin(), latenessCount, sorted.begin());
+    const auto end = sorted.begin() + latenessCount;
+    const int64_t earliest = *std::min_element(sorted.begin(), end);
+    const auto percentile = sorted.begin() + (latenessCount - 1) * kPacingPercentile / 100;
+    std::nth_element(sorted.begin(), percentile, end);
+    const int64_t target = std::min(*percentile, earliest + kPacingMaxDelayNs);
+
+    // Rise quickly so late frames stop arriving after their slot; fall
+    // gradually so one quiet stretch doesn't reintroduce judder.
+    if (target > pacingOffsetNs) {
+        pacingOffsetNs += (target - pacingOffsetNs + 1) / 2;
+    } else {
+        const int64_t excess = pacingOffsetNs - target;
+        pacingOffsetNs -= std::min(excess, std::max(excess / 16, kPacingMinFallNs));
+    }
+    pacingDelayNs = pacingOffsetNs - earliest;
+}
+
+int64_t AVFrameQueue::dueNsLocked(const AVFrame* item) const {
+    return item->pts + pacingOffsetNs + kPacingMarginNs;
+}
+
+AVFrame* AVFrameQueue::popPacedLocked(bool* consumed, std::chrono::steady_clock::time_point now) {
+    startupBuffering = false;
+    playoutResyncNeeded = false;
+    if (queue.empty()) {
+        if (bufferFrame) {
+            fakeFrameUsedStat++;
+            emptyQueueStat++;
+        }
+        return bufferFrame;
+    }
+
+    // Show the newest frame whose time has come; older due frames were
+    // missed (the UI thread was late) and are skipped to keep latency bounded.
+    const int64_t nowNs = steadyNs(now);
+    AVFrame* chosen = nullptr;
+    while (!queue.empty() && dueNsLocked(queue.front()) <= nowNs) {
+        AVFrame* item = queue.front();
+        queue.pop();
+        if (chosen) {
+            recycleFrame(freeQueue, chosen);
+            framesDroppedStat++;
+            pacingSkipStat++;
+        }
+        chosen = item;
+    }
+    if (!chosen) {
+        scheduledHoldStat++;
+        return bufferFrame;
+    }
+
+    recycleFrame(freeQueue, bufferFrame);
+    bufferFrame = chosen;
+    if (consumed) {
+        *consumed = true;
+    }
+    localClockPacedFrameStat++;
+    return bufferFrame;
+}
+
+int64_t AVFrameQueue::nextDueNs() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (!ptsPacing || queue.empty()) {
+        return 0;
+    }
+    return dueNsLocked(queue.front());
+}
+
+double AVFrameQueue::getPacingDelayMs() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return ptsPacing ? double(pacingDelayNs) / 1000000.0 : 0.0;
 }
 
 void AVFrameQueue::recordArrivalLocked(
@@ -484,6 +594,9 @@ void AVFrameQueue::cleanup() {
     frameCredit = 0.0;
     startupBuffering = true;
     playoutResyncNeeded = true;
+    pacingOffsetValid = false;
+    pacingOffsetNs = pacingDelayNs = 0;
+    latenessCount = latenessNext = 0;
 
     if (bufferFrame) {
         av_frame_free(&bufferFrame);

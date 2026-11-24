@@ -8,6 +8,7 @@
 #include <string.h>
 #ifdef __SWITCH2__
 #include "video/Vulkan/Switch2VulkanContext.hpp"
+#include "switch/FramePacing.hpp"
 #include <switch.h>
 #endif
 
@@ -516,13 +517,21 @@ void MoonlightSession::draw(NVGcontext* vg, int width, int height) {
         }
 
         bool consumed = false;
+        int64_t framePts = 0;
         AVFrameHolder::instance().get(
-            [this, vg, width, height](AVFrame* frame) {
+            [this, vg, width, height, &framePts](AVFrame* frame) {
+                framePts = frame->pts;
                 m_video_renderer->draw(vg, width, height, frame, m_video_format);
             }, &consumed);
 #ifdef __SWITCH2__
-        if (auto* context = Switch2VulkanContext::current())
+        if (auto* context = Switch2VulkanContext::current()) {
             context->videoFrameChanged(consumed);
+            const int64_t due = AVFrameHolder::instance().getNextFrameDueNs();
+            context->setVideoDeadline(due > 0 ? uint64_t(due) : 0);
+        }
+        if (consumed)
+            framePacing().drawn(uint64_t(framePts) / 1000, LiGetMicroseconds(),
+                AVFrameHolder::instance().getFrameQueueSize());
 #endif
 
         const uint64_t now = LiGetMillis();
@@ -579,6 +588,15 @@ void MoonlightSession::log_network_health(uint64_t now) {
         decode.network_dropped_frames - m_last_network_dropped, m_connection_status_is_poor,
         decode.current_received_fps, decode.current_decoded_fps, decode.current_receive_time,
         decode.current_decoding_time);
+    const auto& frames = AVFrameHolder::instance();
+    brls::Logger::info("{} | queue_drops={} empty={} resync={} pacing={} pacing_delay_ms={:.1f}",
+        framePacing().report(seconds), frames.getFrameDropStat() - m_last_frame_drops,
+        frames.getFrameQueueEmptyStat() - m_last_queue_empty,
+        frames.getFrameQueuePlayoutResyncStat() - m_last_playout_resync, Settings::instance().frame_pacing(),
+        frames.getFramePacingDelayMs());
+    m_last_frame_drops = frames.getFrameDropStat();
+    m_last_queue_empty = frames.getFrameQueueEmptyStat();
+    m_last_playout_resync = frames.getFrameQueuePlayoutResyncStat();
     m_last_rtp_stats = rtp;
     m_last_network_dropped = decode.network_dropped_frames;
     m_last_health_log_ms = now;

@@ -178,6 +178,7 @@
         "system_button_duplication_error": "Another action already use this system button.",
         "touchscreen_mouse_mode": "Touchscreen mode",
         "use_hw_decoding": "Enable hardware acceleration",
+        "frame_pacing": "Frame pacing (smoother motion, slightly more latency)",
         "use_system_button": "Use system button",
         "usops": "Use Streaming Optimal Playable Settings",
         "video_bitrate": "Video bitrate",

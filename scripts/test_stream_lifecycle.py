@@ -60,7 +60,7 @@ void runDelayed() {
 struct VideoDecodeStats {};
 struct VideoRenderStats {};
 struct NVGcontext {};
-struct AVFrame {};
+struct AVFrame {int64_t pts=0;};
 struct STREAM_CONFIGURATION {};
 struct CONNECTION_LISTENER_CALLBACKS {};
 struct DECODER_RENDERER_CALLBACKS {};
@@ -108,16 +108,22 @@ struct AVFrameHolder {
     template<class F> void get(F fn,bool* consumed){
         AVFrame f;*consumed=true;fn(&f);
     }
+    size_t getFrameQueueSize() const {return 0;}
+    int64_t getNextFrameDueNs() const {return 0;}
 };
+struct FramePacing {void drawn(uint64_t,uint64_t,size_t){}};
+inline FramePacing& framePacing(){static FramePacing p;return p;}
 struct Switch2VulkanContext {
     static Switch2VulkanContext* current(){static Switch2VulkanContext c;return &c;}
     void videoFrameChanged(bool consumed){assert(consumed);}
+    void setVideoDeadline(uint64_t){}
 };
 void LiStopConnection(){
     assert(std::this_thread::get_id()==mainThread);events.push_back("stop");
 }
 static uint64_t nowMs=1000;
 uint64_t LiGetMillis(){return nowMs;}
+uint64_t LiGetMicroseconds(){return nowMs*1000;}
 """
 
 SCENARIOS = r"""

@@ -111,5 +111,8 @@ class MoonlightSession {
     RTP_VIDEO_STATS m_last_rtp_stats = {};
     uint32_t m_last_network_dropped = 0;
     uint64_t m_last_health_log_ms = 0;
+    size_t m_last_frame_drops = 0;
+    size_t m_last_queue_empty = 0;
+    size_t m_last_playout_resync = 0;
 #endif
 };

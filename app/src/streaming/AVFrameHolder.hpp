@@ -5,6 +5,7 @@
 #include <functional>
 #include "Settings.hpp"
 #include <mutex>
+#include <array>
 #include <queue>
 
 extern "C" {
@@ -21,7 +22,8 @@ public:
     AVFrame* pop(bool* consumed = nullptr);
     AVFrame* acquireWriteFrame();
     void recycleWriteFrame(AVFrame*& frame);
-    void configure(size_t queueLimit, int streamFps, bool transferOwnershipEnabled, size_t capacityLimit = 0);
+    void configure(size_t queueLimit, int streamFps, bool transferOwnershipEnabled, size_t capacityLimit = 0,
+        bool ptsPacingEnabled = false);
     static size_t capacityFor(size_t configuredQueueSize);
 
     [[nodiscard]] size_t size() const;
@@ -38,6 +40,10 @@ public:
     [[nodiscard]] size_t getLocalClockPacedFrameStat() const;
     [[nodiscard]] size_t getPlayoutResyncStat() const;
     [[nodiscard]] double getEstimatedSourceFps() const;
+    // Host-timestamp pacing: steady_clock ns when the next queued frame is due
+    // (0 when nothing is waiting), and the delay added over the earliest arrival.
+    [[nodiscard]] int64_t nextDueNs() const;
+    [[nodiscard]] double getPacingDelayMs() const;
 
     void cleanup();
 
@@ -48,11 +54,24 @@ private:
     void recordArrivalLocked(std::chrono::steady_clock::time_point now);
     void resetArrivalRateEstimatorLocked();
     void trimToPlayoutWindowLocked();
+    void recordLatenessLocked(const AVFrame* item, std::chrono::steady_clock::time_point now);
+    AVFrame* popPacedLocked(bool* consumed, std::chrono::steady_clock::time_point now);
+    [[nodiscard]] int64_t dueNsLocked(const AVFrame* item) const;
     size_t limit = 0;
     std::queue<AVFrame*> queue;
     std::queue<AVFrame*> freeQueue;
     AVFrame* bufferFrame = nullptr;
     bool transferOwnership = false;
+    // Frames are shown at host PTS + pacingOffsetNs on the local steady clock.
+    // Lateness = arrival - PTS; the offset tracks a high percentile of recent
+    // lateness so uneven host send/network timing becomes an even cadence.
+    bool ptsPacing = false;
+    bool pacingOffsetValid = false;
+    int64_t pacingOffsetNs = 0;
+    int64_t pacingDelayNs = 0;
+    std::array<int64_t, 120> latenessWindow{};
+    size_t latenessCount = 0;
+    size_t latenessNext = 0;
     size_t targetBufferedFrames = 0;
     int streamFps = 0;
     std::chrono::nanoseconds adaptiveFrameInterval{0};
@@ -110,7 +129,8 @@ class AVFrameHolder : public Singleton<AVFrameHolder> {
 
     void prepare(int streamFps, bool transferOwnership = false, size_t capacityLimit = 0)
     {
-        m_frame_queue.configure(Settings::instance().frames_queue_size(), streamFps, transferOwnership, capacityLimit);
+        m_frame_queue.configure(Settings::instance().frames_queue_size(), streamFps, transferOwnership, capacityLimit,
+            transferOwnership && Settings::instance().frame_pacing());
     }
 
     void cleanup() {
@@ -131,6 +151,8 @@ class AVFrameHolder : public Singleton<AVFrameHolder> {
     [[nodiscard]] size_t getFrameQueueLocalClockPacedFrameStat() const { return m_frame_queue.getLocalClockPacedFrameStat(); }
     [[nodiscard]] size_t getFrameQueuePlayoutResyncStat() const { return m_frame_queue.getPlayoutResyncStat(); }
     [[nodiscard]] double getFrameQueueEstimatedSourceFps() const { return m_frame_queue.getEstimatedSourceFps(); }
+    [[nodiscard]] int64_t getNextFrameDueNs() const { return m_frame_queue.nextDueNs(); }
+    [[nodiscard]] double getFramePacingDelayMs() const { return m_frame_queue.getPacingDelayMs(); }
 
   private:
     AVFrameQueue m_frame_queue;
