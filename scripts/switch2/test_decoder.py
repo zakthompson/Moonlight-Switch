@@ -162,6 +162,12 @@ class AVFrameHolder { public:
         write(
             "test.cpp",
             r"""
+#include "Switch2DisplayTiming.hpp"
+int displayTimingStarts=0,displayTimingStops=0;
+Switch2DisplayTiming& Switch2DisplayTiming::instance(){static Switch2DisplayTiming t;return t;}
+void Switch2DisplayTiming::start(){++displayTimingStarts;}
+void Switch2DisplayTiming::stop(){++displayTimingStops;}
+void Switch2DisplayTiming::run(){}
 #include "FFmpegVideoDecoder.hpp"
 #include "Switch2VideoDecoder.hpp"
 #include "Switch2ImageInterop.hpp"

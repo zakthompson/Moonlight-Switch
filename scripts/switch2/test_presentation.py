@@ -66,11 +66,29 @@ int main(){
         cadence.setFrameDriven(true);
         uint64_t t=start;
         for(int i=0;i<20;++i){t+=33333333;cadence.presented(t);cadence.videoPresented(t);}
-        assert(!cadence.shouldPresent(true,false,false,t+34000000));
-        assert(cadence.shouldPresent(true,false,false,t+50000000));
-        assert(cadence.keepaliveNs()>49000000 && cadence.waitNs(t+45000000)==cadence.keepaliveNs()-45000000);
+        // LFC: a 30 fps frame is re-presented once, halfway (16.7 ms), so the
+        // VRR panel stays in range; never within 4 ms of the next frame.
+        assert(cadence.lfcStepNs()>16600000 && cadence.lfcStepNs()<16700000);
+        assert(!cadence.shouldPresent(true,false,false,t+10000000));
+        assert(cadence.waitNs(t+10000000)==cadence.lfcStepNs()-500000-10000000);
+        assert(cadence.shouldPresent(true,false,false,t+16500000));
+        assert(cadence.shouldPresent(true,false,false,t+16500000,t+33333333));
+        assert(!cadence.shouldPresent(true,false,false,t+16500000,t+19000000));  // next frame too close
+        cadence.presented(t+16666666);  // the re-present
+        assert(!cadence.shouldPresent(true,false,false,t+30000000,t+33333333));
+        // Next frame late and not yet queued: no second re-present at ~33 ms.
+        assert(!cadence.shouldPresent(true,false,false,t+33000000));
+        assert(cadence.waitNs(t+33000000)==8000000);  // only the 8 ms loop bound remains
+        // A late frame with a predicted slot still near: no re-present either.
+        brls::FramePresentation guard;
+        guard.setFrameDriven(true);
+        uint64_t g=start;
+        for(int i=0;i<20;++i){g+=33333333;guard.presented(g);guard.videoPresented(g);}
+        assert(guard.shouldPresent(true,false,false,g+16400000));   // halfway, slot predicted at +33.3
+        assert(!guard.shouldPresent(true,false,false,g+30000000));  // predicted slot within 4 ms
+        assert(cadence.keepaliveNs()>49000000);
         for(int i=0;i<40;++i){t+=16666667;cadence.presented(t);cadence.videoPresented(t);}
-        assert(cadence.keepaliveNs()==34000000);
+        assert(cadence.keepaliveNs()==34000000 && cadence.lfcStepNs()==0);  // 60 fps: no LFC
         cadence.presented(t+2000000000);cadence.videoPresented(t+2000000000);  // stall doesn't count
         assert(cadence.keepaliveNs()==34000000);
         cadence.setFrameDriven(true);

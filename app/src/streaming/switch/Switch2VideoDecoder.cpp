@@ -8,6 +8,7 @@
 
 #include "AVFrameHolder.hpp"
 #include "FramePacing.hpp"
+#include "Switch2DisplayTiming.hpp"
 #include "FFmpegVideoDecoder.hpp"
 #include "Settings.hpp"
 #include "Switch2ImageInterop.hpp"
@@ -68,6 +69,7 @@ void Switch2VideoDecoder::start()
     if (!m_stopped.exchange(false))
         return;
     m_reader = std::thread(&Switch2VideoDecoder::readFrames, this);
+    Switch2DisplayTiming::instance().start();
 }
 
 void Switch2VideoDecoder::stop()
@@ -77,6 +79,7 @@ void Switch2VideoDecoder::stop()
     m_stopped.store(true);
     if (m_reader.joinable())
         m_reader.join();
+    Switch2DisplayTiming::instance().stop();
 }
 
 void Switch2VideoDecoder::cleanup()
